@@ -495,99 +495,134 @@
     }
 
     async function requestOrientationPermission() {
-      try {
-        if (
-          typeof DeviceOrientationEvent !== "undefined" &&
-          typeof DeviceOrientationEvent.requestPermission === "function"
-        ) {
-          const permission = await DeviceOrientationEvent.requestPermission();
+  hasOrientation = false;
 
-          if (permission === "granted") {
-            window.addEventListener("deviceorientation", handleOrientation, true);
-            hasOrientation = true;
-          }
-        } else if (typeof DeviceOrientationEvent !== "undefined") {
-          window.addEventListener("deviceorientation", handleOrientation, true);
-          hasOrientation = true;
-        }
-      } catch (error) {
-        console.warn("Orientación no disponible:", error);
-        hasOrientation = false;
+  try {
+    if (
+      typeof DeviceOrientationEvent !== "undefined" &&
+      typeof DeviceOrientationEvent.requestPermission === "function"
+    ) {
+      const permission = await DeviceOrientationEvent.requestPermission();
+
+      if (permission !== "granted") {
+        setStatus("Permiso de orientación denegado. Activa Movimiento y orientación en Safari.");
+        return false;
       }
     }
 
-    function handleOrientation(event) {
-      if (event.alpha == null) return;
+    window.removeEventListener("deviceorientation", handleOrientation, true);
+    window.removeEventListener("deviceorientationabsolute", handleOrientation, true);
 
-      absoluteYaw = normalizeDeg(360 - event.alpha);
+    window.addEventListener("deviceorientation", handleOrientation, true);
+    window.addEventListener("deviceorientationabsolute", handleOrientation, true);
 
-      if (event.beta != null) {
-        absolutePitch = clamp(event.beta - 90, -85, 85);
+    hasOrientation = true;
+    return true;
+  } catch (error) {
+    console.warn("Orientación no disponible:", error);
+    hasOrientation = false;
+    return false;
+  }
+}
+
+   function handleOrientation(event) {
+  let heading = null;
+
+  // iPhone Safari suele dar esto.
+  if (typeof event.webkitCompassHeading === "number") {
+    heading = event.webkitCompassHeading;
+  }
+
+  // Android / otros navegadores suelen usar alpha.
+  if (heading === null && typeof event.alpha === "number") {
+    heading = 360 - event.alpha;
+  }
+
+  if (heading === null) {
+    return;
+  }
+
+  absoluteYaw = normalizeDeg(heading);
+
+  // Pitch aproximado.
+  // En vertical, beta suele estar cerca de 90.
+  if (typeof event.beta === "number") {
+    absolutePitch = clamp(event.beta - 90, -85, 85);
+  }
+
+  if (typeof event.gamma === "number") {
+    absoluteRoll = event.gamma;
+  }
+
+  if (baseYaw === null) {
+    baseYaw = absoluteYaw;
+  }
+
+  relativeYaw = normalizeDeg(absoluteYaw - baseYaw);
+  relativePitch = absolutePitch;
+
+  updateAimUI();
+}
+async function startCamera() {
+  try {
+    disposeViewer();
+
+    // IMPORTANTE:
+    // Pedimos orientación primero, dentro del click del usuario.
+    const orientationOk = await requestOrientationPermission();
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      },
+      audio: false
+    });
+
+    video.srcObject = stream;
+    await video.play();
+
+    baseYaw = absoluteYaw || 0;
+    relativeYaw = 0;
+    relativePitch = absolutePitch || 0;
+
+    currentIndex = 0;
+    photos = [];
+
+    createProgressDots();
+    createThumbs();
+
+    cameraBtn.disabled = true;
+    captureBtn.disabled = false;
+    sphereBtn.disabled = true;
+
+    aimLayer.style.display = "block";
+    progressMap.style.display = "block";
+    thumbStrip.style.display = "flex";
+
+    setStatus(
+      orientationOk
+        ? "Cámara activa. Alinea el punto amarillo con la diana."
+        : "Cámara activa, pero no hay datos de orientación. Revisa permisos de movimiento."
+    );
+
+    updateStepText();
+    updateAimUI();
+
+    setTimeout(() => {
+      if (hasOrientation && absoluteYaw === 0 && absolutePitch === 0) {
+        setStatus("No recibo datos del giroscopio. En iPhone revisa Ajustes > Safari > Movimiento y orientación.");
       }
+    }, 2500);
 
-      if (event.gamma != null) {
-        absoluteRoll = event.gamma;
-      }
-
-      if (baseYaw !== null) {
-        relativeYaw = normalizeDeg(absoluteYaw - baseYaw);
-      }
-
-      relativePitch = absolutePitch;
-
-      updateAimUI();
-    }
-
-    async function startCamera() {
-      try {
-        disposeViewer();
-
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-          },
-          audio: false
-        });
-
-        video.srcObject = stream;
-        await video.play();
-
-        await requestOrientationPermission();
-
-        baseYaw = absoluteYaw || 0;
-        relativeYaw = 0;
-        relativePitch = absolutePitch || 0;
-
-        currentIndex = 0;
-        photos = [];
-
-        createProgressDots();
-        createThumbs();
-
-        cameraBtn.disabled = true;
-        captureBtn.disabled = false;
-        sphereBtn.disabled = true;
-
-        aimLayer.style.display = "block";
-        progressMap.style.display = "block";
-        thumbStrip.style.display = "flex";
-
-        setStatus(
-          hasOrientation
-            ? "Cámara activa. Alinea el punto amarillo con la diana."
-            : "Cámara activa, pero no detecto bien la orientación. Prueba en Safari/Chrome con HTTPS."
-        );
-
-        updateStepText();
-        updateAimUI();
-      } catch (error) {
-        console.error(error);
-        setStatus("No se pudo abrir la cámara. Revisa permisos y que la web esté en HTTPS.");
-        setStep("Error de cámara");
-      }
-    }
+  } catch (error) {
+    console.error(error);
+    setStatus("No se pudo abrir la cámara. Revisa permisos y que la web esté en HTTPS.");
+    setStep("Error de cámara");
+  }
+}
+   
 
     function updateStepText() {
       const target = targets[currentIndex];
