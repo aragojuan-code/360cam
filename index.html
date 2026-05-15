@@ -101,6 +101,7 @@
       font-size: 15px;
       font-weight: 850;
       color: var(--accent);
+      word-break: break-word;
     }
 
     #metrics {
@@ -170,7 +171,7 @@
       top: calc(50% + 92px);
       transform: translateX(-50%);
       padding: 10px 14px;
-      min-width: 210px;
+      min-width: 220px;
       text-align: center;
       border-radius: 999px;
       background: rgba(15, 20, 27, 0.78);
@@ -312,10 +313,6 @@
     canvas.hiddenCanvas {
       display: none;
     }
-
-    .hidden {
-      display: none !important;
-    }
   </style>
 </head>
 
@@ -351,6 +348,7 @@
       <button id="cameraBtn">Cámara</button>
       <button id="captureBtn" class="notReady" disabled>Capturar</button>
       <button id="sphereBtn" class="secondary" disabled>Crear esfera</button>
+      <button id="linkBtn" class="secondary" disabled>Generar link</button>
       <button id="resetBtn" class="danger">Reiniciar</button>
     </div>
 
@@ -361,6 +359,13 @@
   <script type="module">
     import * as THREE from "https://esm.sh/three@0.160.0";
     import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+    const SUPABASE_URL = "https://rdoivmucgucouauyqdos.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJkb2l2bXVjZ3Vjb3VhdXlxZG9zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA0NTczMjAsImV4cCI6MjA2NjAzMzMyMH0.UHIUOocHPfo65YCL7hK1wGYV4M8EaDSNrS89ZyNIBDU";
+    const SUPABASE_BUCKET = "naojaguar-360cam";
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const video = document.getElementById("video");
     const viewer = document.getElementById("viewer");
@@ -373,6 +378,7 @@
     const cameraBtn = document.getElementById("cameraBtn");
     const captureBtn = document.getElementById("captureBtn");
     const sphereBtn = document.getElementById("sphereBtn");
+    const linkBtn = document.getElementById("linkBtn");
     const resetBtn = document.getElementById("resetBtn");
 
     const aimLayer = document.getElementById("aimLayer");
@@ -421,7 +427,6 @@
       for (let i = 0; i < 8; i++) {
         arr.push({
           ring: "Horizonte",
-          name: "Horizonte " + (i + 1),
           yaw: i * 45,
           pitch: 0,
           label: "Foto " + (i + 1) + "/26: horizonte · gira cada 45°"
@@ -431,7 +436,6 @@
       for (let i = 0; i < 8; i++) {
         arr.push({
           ring: "Arriba",
-          name: "Arriba " + (i + 1),
           yaw: i * 45,
           pitch: 35,
           label: "Foto " + (i + 9) + "/26: inclina hacia arriba · gira cada 45°"
@@ -441,7 +445,6 @@
       for (let i = 0; i < 8; i++) {
         arr.push({
           ring: "Abajo",
-          name: "Abajo " + (i + 1),
           yaw: i * 45,
           pitch: -35,
           label: "Foto " + (i + 17) + "/26: inclina hacia abajo · gira cada 45°"
@@ -450,7 +453,6 @@
 
       arr.push({
         ring: "Cielo",
-        name: "Cielo",
         yaw: 0,
         pitch: 75,
         label: "Foto 25/26: vuelve al frente y apunta al cielo"
@@ -458,7 +460,6 @@
 
       arr.push({
         ring: "Suelo",
-        name: "Suelo",
         yaw: 0,
         pitch: -75,
         label: "Foto 26/26: vuelve al frente y apunta al suelo"
@@ -495,138 +496,130 @@
     }
 
     async function requestOrientationPermission() {
-  hasOrientation = false;
+      hasOrientation = false;
 
-  try {
-    if (
-      typeof DeviceOrientationEvent !== "undefined" &&
-      typeof DeviceOrientationEvent.requestPermission === "function"
-    ) {
-      const permission = await DeviceOrientationEvent.requestPermission();
+      try {
+        if (
+          typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function"
+        ) {
+          const permission = await DeviceOrientationEvent.requestPermission();
 
-      if (permission !== "granted") {
-        setStatus("Permiso de orientación denegado. Activa Movimiento y orientación en Safari.");
+          if (permission !== "granted") {
+            setStatus("Permiso de orientación denegado. Activa Movimiento y orientación en Safari.");
+            return false;
+          }
+        }
+
+        window.removeEventListener("deviceorientation", handleOrientation, true);
+        window.removeEventListener("deviceorientationabsolute", handleOrientation, true);
+
+        window.addEventListener("deviceorientation", handleOrientation, true);
+        window.addEventListener("deviceorientationabsolute", handleOrientation, true);
+
+        hasOrientation = true;
+        return true;
+      } catch (error) {
+        console.warn("Orientación no disponible:", error);
+        hasOrientation = false;
         return false;
       }
     }
 
-    window.removeEventListener("deviceorientation", handleOrientation, true);
-    window.removeEventListener("deviceorientationabsolute", handleOrientation, true);
+    function handleOrientation(event) {
+      let heading = null;
 
-    window.addEventListener("deviceorientation", handleOrientation, true);
-    window.addEventListener("deviceorientationabsolute", handleOrientation, true);
-
-    hasOrientation = true;
-    return true;
-  } catch (error) {
-    console.warn("Orientación no disponible:", error);
-    hasOrientation = false;
-    return false;
-  }
-}
-
-   function handleOrientation(event) {
-  let heading = null;
-
-  // iPhone Safari suele dar esto.
-  if (typeof event.webkitCompassHeading === "number") {
-    heading = event.webkitCompassHeading;
-  }
-
-  // Android / otros navegadores suelen usar alpha.
-  if (heading === null && typeof event.alpha === "number") {
-    heading = 360 - event.alpha;
-  }
-
-  if (heading === null) {
-    return;
-  }
-
-  absoluteYaw = normalizeDeg(heading);
-
-  // Pitch aproximado.
-  // En vertical, beta suele estar cerca de 90.
-  if (typeof event.beta === "number") {
-    absolutePitch = clamp(event.beta - 90, -85, 85);
-  }
-
-  if (typeof event.gamma === "number") {
-    absoluteRoll = event.gamma;
-  }
-
-  if (baseYaw === null) {
-    baseYaw = absoluteYaw;
-  }
-
-  relativeYaw = normalizeDeg(absoluteYaw - baseYaw);
-  relativePitch = absolutePitch;
-
-  updateAimUI();
-}
-async function startCamera() {
-  try {
-    disposeViewer();
-
-    // IMPORTANTE:
-    // Pedimos orientación primero, dentro del click del usuario.
-    const orientationOk = await requestOrientationPermission();
-
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: "environment" },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      },
-      audio: false
-    });
-
-    video.srcObject = stream;
-    await video.play();
-
-    baseYaw = absoluteYaw || 0;
-    relativeYaw = 0;
-    relativePitch = absolutePitch || 0;
-
-    currentIndex = 0;
-    photos = [];
-
-    createProgressDots();
-    createThumbs();
-
-    cameraBtn.disabled = true;
-    captureBtn.disabled = false;
-    sphereBtn.disabled = true;
-
-    aimLayer.style.display = "block";
-    progressMap.style.display = "block";
-    thumbStrip.style.display = "flex";
-
-    setStatus(
-      orientationOk
-        ? "Cámara activa. Alinea el punto amarillo con la diana."
-        : "Cámara activa, pero no hay datos de orientación. Revisa permisos de movimiento."
-    );
-
-    updateStepText();
-    updateAimUI();
-
-    setTimeout(() => {
-      if (hasOrientation && absoluteYaw === 0 && absolutePitch === 0) {
-        setStatus("No recibo datos del giroscopio. En iPhone revisa Ajustes > Safari > Movimiento y orientación.");
+      if (typeof event.webkitCompassHeading === "number") {
+        heading = event.webkitCompassHeading;
       }
-    }, 2500);
 
-  } catch (error) {
-    console.error(error);
-    setStatus("No se pudo abrir la cámara. Revisa permisos y que la web esté en HTTPS.");
-    setStep("Error de cámara");
-  }
-}
-   
+      if (heading === null && typeof event.alpha === "number") {
+        heading = 360 - event.alpha;
+      }
+
+      if (heading === null) return;
+
+      absoluteYaw = normalizeDeg(heading);
+
+      if (typeof event.beta === "number") {
+        absolutePitch = clamp(event.beta - 90, -85, 85);
+      }
+
+      if (typeof event.gamma === "number") {
+        absoluteRoll = event.gamma;
+      }
+
+      if (baseYaw === null) {
+        baseYaw = absoluteYaw;
+      }
+
+      relativeYaw = normalizeDeg(absoluteYaw - baseYaw);
+      relativePitch = absolutePitch;
+
+      updateAimUI();
+    }
+
+    async function startCamera() {
+      try {
+        disposeViewer();
+
+        const orientationOk = await requestOrientationPermission();
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+
+        baseYaw = absoluteYaw || 0;
+        relativeYaw = 0;
+        relativePitch = absolutePitch || 0;
+
+        currentIndex = 0;
+        photos = [];
+
+        createProgressDots();
+        createThumbs();
+
+        cameraBtn.disabled = true;
+        captureBtn.disabled = false;
+        sphereBtn.disabled = true;
+        linkBtn.disabled = true;
+
+        aimLayer.style.display = "block";
+        progressMap.style.display = "block";
+        thumbStrip.style.display = "flex";
+
+        setStatus(
+          orientationOk
+            ? "Cámara activa. Alinea el punto amarillo con la diana."
+            : "Cámara activa, pero no hay datos de orientación. Revisa permisos de movimiento."
+        );
+
+        updateStepText();
+        updateAimUI();
+
+        setTimeout(() => {
+          if (hasOrientation && absoluteYaw === 0 && absolutePitch === 0) {
+            setStatus("No recibo datos del giroscopio. En iPhone revisa Ajustes > Safari > Movimiento y orientación.");
+          }
+        }, 2500);
+
+      } catch (error) {
+        console.error(error);
+        setStatus("No se pudo abrir la cámara. Revisa permisos y que la web esté en HTTPS.");
+        setStep("Error de cámara");
+      }
+    }
 
     function updateStepText() {
       const target = targets[currentIndex];
-
       if (!target) return;
 
       counterEl.textContent = currentIndex + " / 26";
@@ -683,7 +676,6 @@ async function startCamera() {
 
     function updateAimUI() {
       const target = targets[currentIndex];
-
       if (!target) return;
 
       const yawDiff = shortestAngleDiff(target.yaw, relativeYaw);
@@ -704,8 +696,7 @@ async function startCamera() {
         "° · Pitch " + Math.round(relativePitch) +
         "° → " + target.pitch + "°";
 
-      const guide = getGuideText(yawDiff, pitchDiff, dist);
-      arrowGuide.textContent = guide;
+      arrowGuide.textContent = getGuideText(yawDiff, pitchDiff, dist);
 
       captureBtn.classList.remove("ready", "almost", "notReady");
 
@@ -725,38 +716,23 @@ async function startCamera() {
     }
 
     function getGuideText(yawDiff, pitchDiff, dist) {
-      if (dist <= ALIGN_READY_DEG) {
-        return "✓ Posición correcta";
-      }
+      if (dist <= ALIGN_READY_DEG) return "✓ Posición correcta";
 
       const parts = [];
 
       if (Math.abs(yawDiff) > 8) {
-        if (yawDiff > 0) {
-          parts.push("gira a la derecha →");
-        } else {
-          parts.push("gira a la izquierda ←");
-        }
+        parts.push(yawDiff > 0 ? "gira a la derecha →" : "gira a la izquierda ←");
       }
 
       if (Math.abs(pitchDiff) > 8) {
-        if (pitchDiff > 0) {
-          parts.push("inclina arriba ↑");
-        } else {
-          parts.push("inclina abajo ↓");
-        }
+        parts.push(pitchDiff > 0 ? "inclina arriba ↑" : "inclina abajo ↓");
       }
 
-      if (parts.length === 0) {
-        return "Ajuste fino";
-      }
-
-      return parts.join(" · ");
+      return parts.length ? parts.join(" · ") : "Ajuste fino";
     }
 
     function capturePhoto() {
       const target = targets[currentIndex];
-
       if (!target) return;
 
       const yawDiff = shortestAngleDiff(target.yaw, relativeYaw);
@@ -793,7 +769,6 @@ async function startCamera() {
         drawThumb(currentIndex, img);
 
         currentIndex++;
-
         updateProgressDots();
 
         if (currentIndex < targets.length) {
@@ -805,7 +780,7 @@ async function startCamera() {
         }
       };
 
-      img.src = workCanvas.toDataURL("image/jpeg", 0.92);
+      img.src = workCanvas.toDataURL("image/jpeg", 0.9);
     }
 
     function finishCapture() {
@@ -883,51 +858,11 @@ async function startCamera() {
       panoCtx.fillStyle = "#05070a";
       panoCtx.fillRect(0, 0, W, H);
 
-      const rows = [
-        {
-          start: 24,
-          count: 1,
-          y: 0,
-          h: H * 0.18,
-          mode: "full"
-        },
-        {
-          start: 8,
-          count: 8,
-          y: H * 0.14,
-          h: H * 0.28,
-          mode: "ring"
-        },
-        {
-          start: 0,
-          count: 8,
-          y: H * 0.36,
-          h: H * 0.28,
-          mode: "ring"
-        },
-        {
-          start: 16,
-          count: 8,
-          y: H * 0.58,
-          h: H * 0.28,
-          mode: "ring"
-        },
-        {
-          start: 25,
-          count: 1,
-          y: H * 0.82,
-          h: H * 0.18,
-          mode: "full"
-        }
-      ];
-
-      for (const row of rows) {
-        if (row.mode === "ring") {
-          drawRingRow(row.start, row.count, row.y, row.h);
-        } else {
-          drawFullRow(row.start, row.y, row.h);
-        }
-      }
+      drawFullRow(24, 0, H * 0.18);
+      drawRingRow(8, 8, H * 0.14, H * 0.28);
+      drawRingRow(0, 8, H * 0.36, H * 0.28);
+      drawRingRow(16, 8, H * 0.58, H * 0.28);
+      drawFullRow(25, H * 0.82, H * 0.18);
 
       applySoftBlends();
       applySubtleGrid();
@@ -1047,14 +982,12 @@ async function startCamera() {
       const topFade = panoCtx.createLinearGradient(0, 0, 0, H * 0.24);
       topFade.addColorStop(0, "rgba(5,7,10,0.16)");
       topFade.addColorStop(1, "rgba(5,7,10,0)");
-
       panoCtx.fillStyle = topFade;
       panoCtx.fillRect(0, 0, W, H * 0.24);
 
       const bottomFade = panoCtx.createLinearGradient(0, H * 0.76, 0, H);
       bottomFade.addColorStop(0, "rgba(5,7,10,0)");
       bottomFade.addColorStop(1, "rgba(5,7,10,0.16)");
-
       panoCtx.fillStyle = bottomFade;
       panoCtx.fillRect(0, H * 0.76, W, H * 0.24);
     }
@@ -1127,11 +1060,7 @@ async function startCamera() {
       texture.needsUpdate = true;
 
       const geometry = new THREE.SphereGeometry(1.35, 128, 64);
-
-      const material = new THREE.MeshBasicMaterial({
-        map: texture
-      });
-
+      const material = new THREE.MeshBasicMaterial({ map: texture });
       const sphere = new THREE.Mesh(geometry, material);
       scene.add(sphere);
 
@@ -1145,17 +1074,6 @@ async function startCamera() {
       const ring = new THREE.Mesh(ringGeometry, ringMaterial);
       ring.rotation.x = Math.PI / 2;
       scene.add(ring);
-
-      const glowGeometry = new THREE.SphereGeometry(1.38, 96, 48);
-      const glowMaterial = new THREE.MeshBasicMaterial({
-        color: 0x4df0c8,
-        transparent: true,
-        opacity: 0.045,
-        side: THREE.BackSide
-      });
-
-      const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-      scene.add(glow);
 
       controls = new OrbitControls(camera3d, renderer.domElement);
       controls.enableZoom = true;
@@ -1175,22 +1093,89 @@ async function startCamera() {
       sphereBtn.disabled = true;
       captureBtn.disabled = true;
       cameraBtn.disabled = true;
+      linkBtn.disabled = false;
     }
 
-    function drawImageCoverToRect(ctx, img, x, y, w, h) {
-      const cover = coverRect(img.width, img.height, w, h);
+    async function generateShareLink() {
+      try {
+        linkBtn.disabled = true;
+        linkBtn.textContent = "Subiendo...";
+        setStatus("Subiendo esfera a Supabase...");
 
-      ctx.drawImage(
-        img,
-        cover.sx,
-        cover.sy,
-        cover.sw,
-        cover.sh,
-        x,
-        y,
-        w,
-        h
-      );
+        const blob = await new Promise((resolve) => {
+          panoCanvas.toBlob(resolve, "image/jpeg", 0.9);
+        });
+
+        if (!blob) {
+          throw new Error("No se pudo generar la imagen panorámica.");
+        }
+
+        const id = crypto.randomUUID();
+        const filePath = `spheres/${id}.jpg`;
+
+        const uploadResult = await supabase.storage
+          .from(SUPABASE_BUCKET)
+          .upload(filePath, blob, {
+            contentType: "image/jpeg",
+            upsert: false
+          });
+
+        if (uploadResult.error) {
+          throw uploadResult.error;
+        }
+
+        const publicUrlResult = supabase.storage
+          .from(SUPABASE_BUCKET)
+          .getPublicUrl(filePath);
+
+        const publicUrl = publicUrlResult.data.publicUrl;
+
+        const insertResult = await supabase
+          .from("spheres")
+          .insert({
+            id,
+            title: "360Cam sphere",
+            storage_path: filePath,
+            public_url: publicUrl
+          });
+
+        if (insertResult.error) {
+          throw insertResult.error;
+        }
+
+        const shareUrl = `${window.location.origin}/view.html?id=${id}`;
+
+        await copyOrShareLink(shareUrl);
+
+        setStatus("Link generado.");
+        setStep(shareUrl);
+
+        linkBtn.textContent = "Link generado";
+      } catch (error) {
+        console.error(error);
+        setStatus("Error generando link: " + error.message);
+        linkBtn.disabled = false;
+        linkBtn.textContent = "Generar link";
+      }
+    }
+
+    async function copyOrShareLink(url) {
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: "Mi esfera 360",
+            text: "Mira esta esfera 360 creada con 360Cam.",
+            url
+          });
+          return;
+        } catch (error) {
+          console.warn("Compartir cancelado o fallido:", error);
+        }
+      }
+
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(url);
+      }
     }
 
     function animate() {
@@ -1265,6 +1250,9 @@ async function startCamera() {
       cameraBtn.disabled = false;
       captureBtn.disabled = true;
       sphereBtn.disabled = true;
+      linkBtn.disabled = true;
+
+      linkBtn.textContent = "Generar link";
 
       captureBtn.textContent = "Capturar";
       captureBtn.classList.remove("ready", "almost", "secondary");
@@ -1281,6 +1269,7 @@ async function startCamera() {
     cameraBtn.addEventListener("click", startCamera);
     captureBtn.addEventListener("click", capturePhoto);
     sphereBtn.addEventListener("click", createFloatingSphere);
+    linkBtn.addEventListener("click", generateShareLink);
     resetBtn.addEventListener("click", resetApp);
   </script>
 </body>
