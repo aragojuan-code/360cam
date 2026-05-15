@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Ver esfera 360 - NaoJaguar</title>
+
+  <style>
+    :root {
+      --bg: #05070a;
+      --panel: rgba(15, 20, 27, 0.86);
+      --text: #f3f7fb;
+      --muted: #9aa7b3;
+      --accent: #4df0c8;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #viewer {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at center, #16212c 0%, #05070a 68%);
+    }
+
+    #hud {
+      position: fixed;
+      top: 14px;
+      left: 14px;
+      right: 14px;
+      z-index: 10;
+      padding: 14px;
+      border-radius: 18px;
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+    }
+
+    #title {
+      font-weight: 850;
+      font-size: 17px;
+      margin-bottom: 4px;
+    }
+
+    #status {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    #actions {
+      position: fixed;
+      left: 14px;
+      right: 14px;
+      bottom: 14px;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    button,
+    a.button {
+      text-align: center;
+      text-decoration: none;
+      border: 0;
+      border-radius: 16px;
+      padding: 15px 12px;
+      font-size: 15px;
+      font-weight: 850;
+      color: #06110f;
+      background: var(--accent);
+    }
+
+    a.secondary {
+      background: #263241;
+      color: var(--text);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="viewer"></div>
+
+  <div id="hud">
+    <div id="title">360Cam</div>
+    <div id="status">Cargando esfera...</div>
+  </div>
+
+  <div id="actions">
+    <a class="button secondary" href="/">Crear otra</a>
+    <button id="shareBtn">Compartir</button>
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://esm.sh/three@0.160.0";
+    import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+    const SUPABASE_URL = "https://rdoivmucgucouauyqdos.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJkb2l2bXVjZ3Vjb3VhdXlxZG9zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA0NTczMjAsImV4cCI6MjA2NjAzMzMyMH0.UHIUOocHPfo65YCL7hK1wGYV4M8EaDSNrS89ZyNIBDU";
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const viewer = document.getElementById("viewer");
+    const statusEl = document.getElementById("status");
+    const shareBtn = document.getElementById("shareBtn");
+
+    let renderer;
+    let scene;
+    let camera3d;
+    let controls;
+    let animationId;
+
+    async function init() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const id = params.get("id");
+
+        if (!id) {
+          throw new Error("Falta el id de la esfera.");
+        }
+
+        const { data, error } = await supabase
+          .from("spheres")
+          .select("*")
+          .eq("id", id)
+          .single();
+
+        if (error) throw error;
+
+        if (!data) {
+          throw new Error("No se encontró la esfera.");
+        }
+
+        createSphere(data.public_url);
+
+        statusEl.textContent = "Arrastra para girar. Pellizca para zoom.";
+      } catch (error) {
+        console.error(error);
+        statusEl.textContent = "Error cargando esfera: " + error.message;
+      }
+    }
+
+    function createSphere(imageUrl) {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x05070a);
+
+      camera3d = new THREE.PerspectiveCamera(
+        45,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        100
+      );
+
+      camera3d.position.set(0, 0, 4.2);
+
+      renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: false
+      });
+
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      viewer.innerHTML = "";
+      viewer.appendChild(renderer.domElement);
+
+      const loader = new THREE.TextureLoader();
+      loader.setCrossOrigin("anonymous");
+
+      loader.load(
+        imageUrl,
+        (texture) => {
+          texture.colorSpace = THREE.SRGBColorSpace;
+
+          const geometry = new THREE.SphereGeometry(1.35, 128, 64);
+          const material = new THREE.MeshBasicMaterial({
+            map: texture
+          });
+
+          const sphere = new THREE.Mesh(geometry, material);
+          scene.add(sphere);
+
+          const ringGeometry = new THREE.TorusGeometry(1.39, 0.007, 16, 180);
+          const ringMaterial = new THREE.MeshBasicMaterial({
+            color: 0x4df0c8,
+            transparent: true,
+            opacity: 0.28
+          });
+
+          const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+          ring.rotation.x = Math.PI / 2;
+          scene.add(ring);
+
+          controls = new OrbitControls(camera3d, renderer.domElement);
+          controls.enableZoom = true;
+          controls.enablePan = false;
+          controls.enableDamping = true;
+          controls.dampingFactor = 0.08;
+          controls.rotateSpeed = 0.55;
+          controls.zoomSpeed = 0.9;
+          controls.minDistance = 2.0;
+          controls.maxDistance = 8.5;
+          controls.target.set(0, 0, 0);
+
+          animate();
+        },
+        undefined,
+        (error) => {
+          console.error(error);
+          statusEl.textContent = "No se pudo cargar la imagen de la esfera.";
+        }
+      );
+
+      window.addEventListener("resize", onResize);
+    }
+
+    function animate() {
+      animationId = requestAnimationFrame(animate);
+
+      if (controls) controls.update();
+
+      if (renderer && scene && camera3d) {
+        renderer.render(scene, camera3d);
+      }
+    }
+
+    function onResize() {
+      if (!renderer || !camera3d) return;
+
+      camera3d.aspect = window.innerWidth / window.innerHeight;
+      camera3d.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    async function shareCurrentLink() {
+      const url = window.location.href;
+
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: "Mi esfera 360",
+            text: "Mira esta esfera 360 creada con 360Cam.",
+            url
+          });
+          return;
+        } catch (error) {
+          console.warn(error);
+        }
+      }
+
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(url);
+        statusEl.textContent = "Link copiado.";
+      }
+    }
+
+    shareBtn.addEventListener("click", shareCurrentLink);
+
+    init();
+  </script>
+</body>
+</html>
