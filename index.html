@@ -102,6 +102,8 @@
       font-weight: 850;
       color: var(--accent);
       word-break: break-word;
+      user-select: text;
+      -webkit-user-select: text;
     }
 
     #metrics {
@@ -349,6 +351,7 @@
       <button id="captureBtn" class="notReady" disabled>Capturar</button>
       <button id="sphereBtn" class="secondary" disabled>Crear esfera</button>
       <button id="linkBtn" class="secondary" disabled>Generar link</button>
+      <button id="copyBtn" class="secondary" disabled>Copiar link</button>
       <button id="resetBtn" class="danger">Reiniciar</button>
     </div>
 
@@ -379,6 +382,7 @@
     const captureBtn = document.getElementById("captureBtn");
     const sphereBtn = document.getElementById("sphereBtn");
     const linkBtn = document.getElementById("linkBtn");
+    const copyBtn = document.getElementById("copyBtn");
     const resetBtn = document.getElementById("resetBtn");
 
     const aimLayer = document.getElementById("aimLayer");
@@ -396,6 +400,7 @@
     const panoCtx = panoCanvas.getContext("2d");
 
     let stream = null;
+    let lastShareUrl = "";
 
     let absoluteYaw = 0;
     let absolutePitch = 0;
@@ -583,6 +588,7 @@
 
         currentIndex = 0;
         photos = [];
+        lastShareUrl = "";
 
         createProgressDots();
         createThumbs();
@@ -591,6 +597,9 @@
         captureBtn.disabled = false;
         sphereBtn.disabled = true;
         linkBtn.disabled = true;
+        copyBtn.disabled = true;
+
+        linkBtn.textContent = "Generar link";
 
         aimLayer.style.display = "block";
         progressMap.style.display = "block";
@@ -1094,11 +1103,13 @@
       captureBtn.disabled = true;
       cameraBtn.disabled = true;
       linkBtn.disabled = false;
+      copyBtn.disabled = !lastShareUrl;
     }
 
     async function generateShareLink() {
       try {
         linkBtn.disabled = true;
+        copyBtn.disabled = true;
         linkBtn.textContent = "Subiendo...";
         setStatus("Subiendo esfera a Supabase...");
 
@@ -1144,28 +1155,51 @@
         }
 
         const shareUrl = `${window.location.origin}/view.html?id=${id}`;
+        lastShareUrl = shareUrl;
 
-        await copyOrShareLink(shareUrl);
-
-        setStatus("Link generado.");
+        setStatus("Link generado. Puedes copiarlo o compartirlo.");
         setStep(shareUrl);
 
-        linkBtn.textContent = "Link generado";
+        linkBtn.textContent = "Compartir";
+        linkBtn.disabled = false;
+        copyBtn.disabled = false;
+
+        await copyLinkToClipboard(shareUrl);
       } catch (error) {
         console.error(error);
         setStatus("Error generando link: " + error.message);
         linkBtn.disabled = false;
-        linkBtn.textContent = "Generar link";
+        copyBtn.disabled = !lastShareUrl;
+        linkBtn.textContent = lastShareUrl ? "Compartir" : "Generar link";
       }
     }
 
-    async function copyOrShareLink(url) {
+    async function copyLinkToClipboard(url) {
+      try {
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(url);
+          setStatus("Link generado y copiado al portapapeles.");
+          return true;
+        }
+      } catch (error) {
+        console.warn("No se pudo copiar automáticamente:", error);
+      }
+
+      return false;
+    }
+
+    async function shareCurrentSphereLink() {
+      if (!lastShareUrl) {
+        await generateShareLink();
+        return;
+      }
+
       if (navigator.share) {
         try {
           await navigator.share({
             title: "Mi esfera 360",
             text: "Mira esta esfera 360 creada con 360Cam.",
-            url
+            url: lastShareUrl
           });
           return;
         } catch (error) {
@@ -1173,9 +1207,24 @@
         }
       }
 
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(url);
+      await copyCurrentSphereLink();
+    }
+
+    async function copyCurrentSphereLink() {
+      if (!lastShareUrl) {
+        setStatus("Todavía no hay link generado.");
+        return;
       }
+
+      const copied = await copyLinkToClipboard(lastShareUrl);
+
+      if (copied) {
+        setStatus("Link copiado.");
+      } else {
+        setStatus("No se pudo copiar automáticamente. Mantén pulsado el link de arriba para copiarlo.");
+      }
+
+      setStep(lastShareUrl);
     }
 
     function animate() {
@@ -1246,13 +1295,16 @@
 
       currentIndex = 0;
       photos = [];
+      lastShareUrl = "";
 
       cameraBtn.disabled = false;
       captureBtn.disabled = true;
       sphereBtn.disabled = true;
       linkBtn.disabled = true;
+      copyBtn.disabled = true;
 
       linkBtn.textContent = "Generar link";
+      copyBtn.textContent = "Copiar link";
 
       captureBtn.textContent = "Capturar";
       captureBtn.classList.remove("ready", "almost", "secondary");
@@ -1269,7 +1321,16 @@
     cameraBtn.addEventListener("click", startCamera);
     captureBtn.addEventListener("click", capturePhoto);
     sphereBtn.addEventListener("click", createFloatingSphere);
-    linkBtn.addEventListener("click", generateShareLink);
+
+    linkBtn.addEventListener("click", () => {
+      if (lastShareUrl) {
+        shareCurrentSphereLink();
+      } else {
+        generateShareLink();
+      }
+    });
+
+    copyBtn.addEventListener("click", copyCurrentSphereLink);
     resetBtn.addEventListener("click", resetApp);
   </script>
 </body>
