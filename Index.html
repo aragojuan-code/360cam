@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Foto esfera 360 - Prototipo</title>
+
+  <style>
+    :root {
+      --bg: #0f141b;
+      --panel: #161d26;
+      --text: #f2f5f8;
+      --muted: #9aa7b3;
+      --accent: #4df0c8;
+      --danger: #ff5c7a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+
+    #app {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #videoWrap {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+      background: black;
+    }
+
+    video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(1);
+    }
+
+    #viewer {
+      position: absolute;
+      inset: 0;
+      display: none;
+      background: black;
+    }
+
+    #hud {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(15, 20, 27, 0.78);
+      backdrop-filter: blur(12px);
+      z-index: 10;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    #status {
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    #controls {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 16px;
+      padding: 14px 12px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #07110f;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #263241;
+      color: var(--text);
+    }
+
+    button.danger {
+      background: var(--danger);
+      color: white;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    #miniMap {
+      position: absolute;
+      right: 14px;
+      bottom: 92px;
+      width: 140px;
+      height: 70px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: #111;
+      z-index: 11;
+    }
+
+    #miniMap canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #crosshair {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 90px;
+      height: 90px;
+      transform: translate(-50%, -50%);
+      border: 2px solid rgba(77, 240, 200, 0.65);
+      border-radius: 50%;
+      z-index: 8;
+      pointer-events: none;
+    }
+
+    #crosshair::before,
+    #crosshair::after {
+      content: "";
+      position: absolute;
+      background: rgba(77, 240, 200, 0.8);
+    }
+
+    #crosshair::before {
+      width: 2px;
+      height: 26px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    #crosshair::after {
+      width: 26px;
+      height: 2px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    #panoramaCanvas {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <div id="videoWrap">
+      <video id="video" autoplay playsinline muted></video>
+      <div id="viewer"></div>
+      <div id="crosshair"></div>
+
+      <div id="hud">
+        <strong>Foto esfera 360</strong>
+        <div id="status">
+          Pulsa “Iniciar cámara”. Después gira lentamente sobre ti mismo cubriendo todo alrededor.
+        </div>
+      </div>
+
+      <div id="miniMap">
+        <canvas id="miniCanvas" width="512" height="256"></canvas>
+      </div>
+
+      <div id="controls">
+        <button id="cameraBtn">Iniciar cámara</button>
+        <button id="scanBtn" class="secondary" disabled>Empezar captura</button>
+        <button id="buildBtn" class="secondary" disabled>Crear esfera</button>
+        <button id="resetBtn" class="danger">Reiniciar</button>
+      </div>
+    </div>
+
+    <canvas id="panoramaCanvas" width="2048" height="1024"></canvas>
+  </div>
+
+  <!-- Three.js -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+
+  <script>
+    const video = document.getElementById("video");
+    const viewer = document.getElementById("viewer");
+    const statusEl = document.getElementById("status");
+
+    const cameraBtn = document.getElementById("cameraBtn");
+    const scanBtn = document.getElementById("scanBtn");
+    const buildBtn = document.getElementById("buildBtn");
+    const resetBtn = document.getElementById("resetBtn");
+
+    const panoramaCanvas = document.getElementById("panoramaCanvas");
+    const panoCtx = panoramaCanvas.getContext("2d");
+
+    const miniCanvas = document.getElementById("miniCanvas");
+    const miniCtx = miniCanvas.getContext("2d");
+
+    let stream = null;
+    let isScanning = false;
+    let captureTimer = null;
+
+    let yaw = 0;
+    let pitch = 0;
+    let hasOrientation = false;
+
+    let renderer, scene, camera3d, sphere, controls;
+    let animationId = null;
+
+    const PANO_W = panoramaCanvas.width;
+    const PANO_H = panoramaCanvas.height;
+
+    const frameCanvas = document.createElement("canvas");
+    const frameCtx = frameCanvas.getContext("2d");
+
+    const brushCanvas = document.createElement("canvas");
+    const brushCtx = brushCanvas.getContext("2d");
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function clearPanorama() {
+      panoCtx.fillStyle = "#05070a";
+      panoCtx.fillRect(0, 0, PANO_W, PANO_H);
+
+      panoCtx.fillStyle = "rgba(255,255,255,0.06)";
+      for (let x = 0; x < PANO_W; x += PANO_W / 12) {
+        panoCtx.fillRect(x, 0, 1, PANO_H);
+      }
+      for (let y = 0; y < PANO_H; y += PANO_H / 6) {
+        panoCtx.fillRect(0, y, PANO_W, 1);
+      }
+
+      updateMiniMap();
+    }
+
+    function updateMiniMap() {
+      miniCtx.drawImage(panoramaCanvas, 0, 0, miniCanvas.width, miniCanvas.height);
+
+      const pos = yawPitchToPano(yaw, pitch);
+      const mx = pos.x / PANO_W * miniCanvas.width;
+      const my = pos.y / PANO_H * miniCanvas.height;
+
+      miniCtx.beginPath();
+      miniCtx.arc(mx, my, 5, 0, Math.PI * 2);
+      miniCtx.fillStyle = "#4df0c8";
+      miniCtx.fill();
+
+      miniCtx.strokeStyle = "rgba(255,255,255,0.9)";
+      miniCtx.lineWidth = 1;
+      miniCtx.stroke();
+    }
+
+    function yawPitchToPano(yawDeg, pitchDeg) {
+      const normalizedYaw = ((yawDeg % 360) + 360) % 360;
+      const clampedPitch = Math.max(-85, Math.min(85, pitchDeg));
+
+      const x = normalizedYaw / 360 * PANO_W;
+      const y = (90 - clampedPitch) / 180 * PANO_H;
+
+      return { x, y };
+    }
+
+    async function requestCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false
+        });
+
+        video.srcObject = stream;
+
+        await video.play();
+
+        frameCanvas.width = video.videoWidth || 1280;
+        frameCanvas.height = video.videoHeight || 720;
+
+        scanBtn.disabled = false;
+        cameraBtn.disabled = true;
+
+        await requestOrientationPermission();
+
+        setStatus(
+          hasOrientation
+            ? "Cámara lista. Gira lentamente. El móvil usará el giroscopio para colocar cada fragmento."
+            : "Cámara lista. No hay giroscopio disponible; se usará modo manual aproximado."
+        );
+      } catch (err) {
+        console.error(err);
+        setStatus("No se pudo acceder a la cámara. Revisa permisos del navegador.");
+      }
+    }
+
+    async function requestOrientationPermission() {
+      try {
+        if (
+          typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function"
+        ) {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          if (permission === "granted") {
+            window.addEventListener("deviceorientation", handleOrientation, true);
+            hasOrientation = true;
+          }
+        } else if (typeof DeviceOrientationEvent !== "undefined") {
+          window.addEventListener("deviceorientation", handleOrientation, true);
+          hasOrientation = true;
+        }
+      } catch (err) {
+        console.warn("Orientación no disponible:", err);
+        hasOrientation = false;
+      }
+    }
+
+    function handleOrientation(event) {
+      if (event.alpha == null) return;
+
+      yaw = 360 - event.alpha;
+
+      if (event.beta != null) {
+        pitch = Math.max(-85, Math.min(85, event.beta - 90));
+      }
+
+      updateMiniMap();
+    }
+
+    function startScanning() {
+      if (!stream) return;
+
+      isScanning = true;
+      scanBtn.textContent = "Parar captura";
+      scanBtn.classList.remove("secondary");
+      scanBtn.classList.add("danger");
+
+      buildBtn.disabled = true;
+
+      setStatus("Capturando vídeo. Gira despacio: izquierda, derecha, arriba y abajo.");
+
+      captureTimer = setInterval(captureFrameToPanorama, 180);
+    }
+
+    function stopScanning() {
+      isScanning = false;
+
+      clearInterval(captureTimer);
+      captureTimer = null;
+
+      scanBtn.textContent = "Continuar captura";
+      scanBtn.classList.add("secondary");
+      scanBtn.classList.remove("danger");
+
+      buildBtn.disabled = false;
+
+      setStatus("Captura detenida. Puedes seguir capturando o crear la esfera 3D.");
+    }
+
+    function captureFrameToPanorama() {
+      if (!video.videoWidth || !video.videoHeight) return;
+
+      frameCanvas.width = video.videoWidth;
+      frameCanvas.height = video.videoHeight;
+
+      frameCtx.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
+
+      const pos = yawPitchToPano(yaw, pitch);
+
+      const patchW = Math.round(PANO_W * 0.16);
+      const patchH = Math.round(PANO_H * 0.16);
+
+      brushCanvas.width = patchW;
+      brushCanvas.height = patchH;
+
+      brushCtx.clearRect(0, 0, patchW, patchH);
+
+      const sourceAspect = frameCanvas.width / frameCanvas.height;
+      const targetAspect = patchW / patchH;
+
+      let sx, sy, sw, sh;
+
+      if (sourceAspect > targetAspect) {
+        sh = frameCanvas.height;
+        sw = sh * targetAspect;
+        sx = (frameCanvas.width - sw) / 2;
+        sy = 0;
+      } else {
+        sw = frameCanvas.width;
+        sh = sw / targetAspect;
+        sx = 0;
+        sy = (frameCanvas.height - sh) / 2;
+      }
+
+      brushCtx.drawImage(
+        frameCanvas,
+        sx, sy, sw, sh,
+        0, 0, patchW, patchH
+      );
+
+      const gradient = brushCtx.createRadialGradient(
+        patchW / 2, patchH / 2, patchW * 0.1,
+        patchW / 2, patchH / 2, patchW * 0.58
+      );
+
+      gradient.addColorStop(0, "rgba(255,255,255,1)");
+      gradient.addColorStop(0.7, "rgba(255,255,255,0.88)");
+      gradient.addColorStop(1, "rgba(255,255,255,0)");
+
+      brushCtx.globalCompositeOperation = "destination-in";
+      brushCtx.fillStyle = gradient;
+      brushCtx.fillRect(0, 0, patchW, patchH);
+      brushCtx.globalCompositeOperation = "source-over";
+
+      drawWrappedPatch(brushCanvas, pos.x - patchW / 2, pos.y - patchH / 2, patchW, patchH);
+
+      if (!hasOrientation) {
+        yaw += 8;
+        if (yaw >= 360) {
+          yaw = 0;
+          pitch += 28;
+          if (pitch > 70) pitch = -70;
+        }
+      }
+
+      updateMiniMap();
+    }
+
+    function drawWrappedPatch(img, x, y, w, h) {
+      const positions = [
+        { x, y },
+        { x: x - PANO_W, y },
+        { x: x + PANO_W, y }
+      ];
+
+      for (const p of positions) {
+        panoCtx.drawImage(img, p.x, p.y, w, h);
+      }
+    }
+
+    function buildSphere() {
+      stopScanningIfNeeded();
+
+      video.style.display = "none";
+      viewer.style.display = "block";
+      document.getElementById("crosshair").classList.add("hidden");
+      document.getElementById("miniMap").classList.add("hidden");
+
+      scanBtn.disabled = true;
+      buildBtn.disabled = true;
+
+      setStatus("Esfera creada. Arrastra con el dedo para mirar alrededor.");
+
+      initThreeViewer();
+    }
+
+    function stopScanningIfNeeded() {
+      if (isScanning) stopScanning();
+    }
+
+    function initThreeViewer() {
+      disposeThreeViewer();
+
+      scene = new THREE.Scene();
+
+      camera3d = new THREE.PerspectiveCamera(
+        75,
+        viewer.clientWidth / viewer.clientHeight,
+        0.1,
+        1000
+      );
+
+      camera3d.position.set(0, 0, 0.1);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio || 1);
+      renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+      viewer.innerHTML = "";
+      viewer.appendChild(renderer.domElement);
+
+      const texture = new THREE.CanvasTexture(panoramaCanvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+
+      const geometry = new THREE.SphereGeometry(50, 96, 48);
+      geometry.scale(-1, 1, 1);
+
+      const material = new THREE.MeshBasicMaterial({
+        map: texture
+      });
+
+      sphere = new THREE.Mesh(geometry, material);
+      scene.add(sphere);
+
+      controls = new THREE.OrbitControls(camera3d, renderer.domElement);
+      controls.enableZoom = false;
+      controls.enablePan = false;
+      controls.rotateSpeed = -0.35;
+
+      animate();
+
+      window.addEventListener("resize", handleResize);
+    }
+
+    function animate() {
+      animationId = requestAnimationFrame(animate);
+
+      if (controls) controls.update();
+      if (renderer && scene && camera3d) {
+        renderer.render(scene, camera3d);
+      }
+    }
+
+    function handleResize() {
+      if (!renderer || !camera3d) return;
+
+      camera3d.aspect = viewer.clientWidth / viewer.clientHeight;
+      camera3d.updateProjectionMatrix();
+      renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+    }
+
+    function disposeThreeViewer() {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+
+      window.removeEventListener("resize", handleResize);
+
+      if (renderer) {
+        renderer.dispose();
+        viewer.innerHTML = "";
+      }
+
+      renderer = null;
+      scene = null;
+      camera3d = null;
+      sphere = null;
+      controls = null;
+    }
+
+    function resetApp() {
+      stopScanningIfNeeded();
+      disposeThreeViewer();
+
+      viewer.style.display = "none";
+      video.style.display = "block";
+      document.getElementById("crosshair").classList.remove("hidden");
+      document.getElementById("miniMap").classList.remove("hidden");
+
+      yaw = 0;
+      pitch = 0;
+
+      clearPanorama();
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+
+      video.srcObject = null;
+
+      cameraBtn.disabled = false;
+      scanBtn.disabled = true;
+      buildBtn.disabled = true;
+
+      scanBtn.textContent = "Empezar captura";
+      scanBtn.classList.add("secondary");
+      scanBtn.classList.remove("danger");
+
+      setStatus("Pulsa “Iniciar cámara”. Después gira lentamente sobre ti mismo cubriendo todo alrededor.");
+    }
+
+    cameraBtn.addEventListener("click", requestCamera);
+
+    scanBtn.addEventListener("click", () => {
+      if (isScanning) {
+        stopScanning();
+      } else {
+        startScanning();
+      }
+    });
+
+    buildBtn.addEventListener("click", buildSphere);
+    resetBtn.addEventListener("click", resetApp);
+
+    clearPanorama();
+  </script>
+</body>
+</html>
