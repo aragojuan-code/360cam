@@ -8,11 +8,12 @@
   <style>
     :root {
       --bg: #0f141b;
-      --panel: rgba(15, 20, 27, 0.82);
+      --panel: rgba(15, 20, 27, 0.84);
       --text: #f3f7fb;
       --muted: #9aa7b3;
       --accent: #4df0c8;
       --danger: #ff5c7a;
+      --soft: #263241;
     }
 
     * {
@@ -47,6 +48,7 @@
 
     #viewer {
       display: none;
+      background: radial-gradient(circle at center, #16212c 0%, #05070a 65%);
     }
 
     #hud {
@@ -63,7 +65,7 @@
     }
 
     #title {
-      font-weight: 800;
+      font-weight: 850;
       font-size: 17px;
       margin-bottom: 4px;
     }
@@ -72,6 +74,13 @@
       font-size: 14px;
       line-height: 1.35;
       color: var(--muted);
+    }
+
+    #step {
+      margin-top: 8px;
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--accent);
     }
 
     #controls {
@@ -91,14 +100,14 @@
       border-radius: 16px;
       padding: 15px 12px;
       font-size: 15px;
-      font-weight: 800;
+      font-weight: 850;
       color: #06110f;
       background: var(--accent);
       cursor: pointer;
     }
 
     button.secondary {
-      background: #263241;
+      background: var(--soft);
       color: var(--text);
     }
 
@@ -148,24 +157,41 @@
       height: 2px;
     }
 
-    #thumb {
+    #thumbs {
       position: absolute;
+      left: 14px;
       right: 14px;
       bottom: 112px;
-      width: 128px;
-      height: 64px;
-      border-radius: 12px;
-      overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.18);
       z-index: 9;
-      background: #111;
-      display: none;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 6px;
+      pointer-events: none;
     }
 
-    #thumb canvas {
+    .thumb {
+      height: 58px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.14);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .thumb canvas {
       width: 100%;
       height: 100%;
       display: block;
+    }
+
+    .thumb span {
+      position: absolute;
+      left: 5px;
+      top: 3px;
+      font-size: 11px;
+      font-weight: 800;
+      color: white;
+      text-shadow: 0 1px 5px black;
     }
 
     canvas.hiddenCanvas {
@@ -188,33 +214,38 @@
 
     <div id="hud">
       <div id="title">360Cam</div>
-      <div id="status">
-        Pulsa “Cámara”. Después apunta a una escena y pulsa “Capturar”.
-      </div>
+      <div id="status">Pulsa “Cámara”. Después haremos 6 fotos guiadas.</div>
+      <div id="step">Esperando cámara</div>
     </div>
 
-    <div id="thumb">
-      <canvas id="thumbCanvas" width="512" height="256"></canvas>
+    <div id="thumbs">
+      <div class="thumb"><span>1</span><canvas width="220" height="160"></canvas></div>
+      <div class="thumb"><span>2</span><canvas width="220" height="160"></canvas></div>
+      <div class="thumb"><span>3</span><canvas width="220" height="160"></canvas></div>
+      <div class="thumb"><span>4</span><canvas width="220" height="160"></canvas></div>
+      <div class="thumb"><span>5</span><canvas width="220" height="160"></canvas></div>
+      <div class="thumb"><span>6</span><canvas width="220" height="160"></canvas></div>
     </div>
 
     <div id="controls">
       <button id="cameraBtn">Cámara</button>
-      <button id="captureBtn" class="secondary" disabled>Capturar</button>
+      <button id="captureBtn" class="secondary" disabled>Foto 1</button>
       <button id="sphereBtn" class="secondary" disabled>Crear esfera</button>
       <button id="resetBtn" class="danger">Reiniciar</button>
     </div>
 
-    <canvas id="photoCanvas" class="hiddenCanvas"></canvas>
+    <canvas id="workCanvas" class="hiddenCanvas"></canvas>
     <canvas id="panoCanvas" class="hiddenCanvas" width="2048" height="1024"></canvas>
   </div>
 
   <script type="module">
-import * as THREE from "https://esm.sh/three@0.160.0";
-import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+    import * as THREE from "https://esm.sh/three@0.160.0";
+    import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js";
 
     const video = document.getElementById("video");
     const viewer = document.getElementById("viewer");
     const statusEl = document.getElementById("status");
+    const stepEl = document.getElementById("step");
 
     const cameraBtn = document.getElementById("cameraBtn");
     const captureBtn = document.getElementById("captureBtn");
@@ -222,27 +253,41 @@ import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/control
     const resetBtn = document.getElementById("resetBtn");
 
     const captureRing = document.getElementById("captureRing");
-    const thumb = document.getElementById("thumb");
 
-    const photoCanvas = document.getElementById("photoCanvas");
-    const photoCtx = photoCanvas.getContext("2d");
+    const thumbs = Array.from(document.querySelectorAll(".thumb canvas"));
+
+    const workCanvas = document.getElementById("workCanvas");
+    const workCtx = workCanvas.getContext("2d");
 
     const panoCanvas = document.getElementById("panoCanvas");
     const panoCtx = panoCanvas.getContext("2d");
 
-    const thumbCanvas = document.getElementById("thumbCanvas");
-    const thumbCtx = thumbCanvas.getContext("2d");
-
     let stream = null;
+    let currentStep = 0;
+    let photos = [];
+
     let renderer = null;
     let scene = null;
     let camera3d = null;
     let controls = null;
-    let animationId = null;
     let texture = null;
+    let animationId = null;
+
+    const instructions = [
+      "Foto 1/6: frente. Teléfono vertical.",
+      "Foto 2/6: gira 90° a la derecha. Teléfono vertical.",
+      "Foto 3/6: gira otros 90°. Estás mirando hacia atrás.",
+      "Foto 4/6: gira otros 90°. Teléfono vertical.",
+      "Foto 5/6: vuelve al ángulo de la foto 1 y apunta al cielo.",
+      "Foto 6/6: mismo ángulo de la foto 1 y apunta al suelo."
+    ];
 
     function setStatus(text) {
       statusEl.textContent = text;
+    }
+
+    function setStep(text) {
+      stepEl.textContent = text;
     }
 
     async function startCamera() {
@@ -261,84 +306,166 @@ import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/control
 
         cameraBtn.disabled = true;
         captureBtn.disabled = false;
+        sphereBtn.disabled = true;
 
-        setStatus("Cámara activa. Apunta a una escena amplia y pulsa “Capturar”.");
+        currentStep = 0;
+        photos = [];
+
+        captureBtn.textContent = "Foto 1";
+
+        setStatus("Cámara activa. Sigue las instrucciones y captura las 6 fotos.");
+        setStep(instructions[currentStep]);
       } catch (error) {
         console.error(error);
-        setStatus("No se pudo abrir la cámara. Revisa permisos y usa HTTPS.");
+        setStatus("No se pudo abrir la cámara. Revisa permisos y que la web esté en HTTPS.");
+        setStep("Error de cámara");
       }
     }
 
     function capturePhoto() {
       if (!video.videoWidth || !video.videoHeight) {
-        setStatus("La cámara todavía no está lista. Espera un segundo.");
+        setStatus("La cámara aún no está lista. Espera un segundo.");
         return;
       }
 
-      photoCanvas.width = video.videoWidth;
-      photoCanvas.height = video.videoHeight;
+      workCanvas.width = video.videoWidth;
+      workCanvas.height = video.videoHeight;
+      workCtx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
 
-      photoCtx.drawImage(video, 0, 0, photoCanvas.width, photoCanvas.height);
+      const img = new Image();
+      img.onload = () => {
+        photos[currentStep] = img;
+        drawThumb(currentStep, img);
 
-      createFakePanoramaFromPhoto();
+        currentStep++;
 
-      thumb.style.display = "block";
-      thumbCtx.drawImage(panoCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+        if (currentStep < 6) {
+          captureBtn.textContent = "Foto " + (currentStep + 1);
+          setStep(instructions[currentStep]);
+          setStatus("Foto guardada. Colócate para la siguiente toma.");
+        } else {
+          captureBtn.disabled = true;
+          sphereBtn.disabled = false;
+          captureBtn.textContent = "Completado";
+          setStatus("Ya tienes las 6 fotos. Pulsa “Crear esfera”.");
+          setStep("Captura completa");
+        }
+      };
 
-      sphereBtn.disabled = false;
-
-      setStatus("Foto capturada. Ahora pulsa “Crear esfera”.");
+      img.src = workCanvas.toDataURL("image/jpeg", 0.92);
     }
 
-    function createFakePanoramaFromPhoto() {
+    function drawThumb(index, img) {
+      const canvas = thumbs[index];
+      const ctx = canvas.getContext("2d");
+
+      ctx.fillStyle = "#05070a";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const cover = coverRect(img.width, img.height, canvas.width, canvas.height);
+
+      ctx.drawImage(
+        img,
+        cover.sx, cover.sy, cover.sw, cover.sh,
+        0, 0, canvas.width, canvas.height
+      );
+
+      ctx.fillStyle = "rgba(77, 240, 200, 0.12)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function coverRect(srcW, srcH, dstW, dstH) {
+      const srcAspect = srcW / srcH;
+      const dstAspect = dstW / dstH;
+
+      let sx, sy, sw, sh;
+
+      if (srcAspect > dstAspect) {
+        sh = srcH;
+        sw = sh * dstAspect;
+        sx = (srcW - sw) / 2;
+        sy = 0;
+      } else {
+        sw = srcW;
+        sh = sw / dstAspect;
+        sx = 0;
+        sy = (srcH - sh) / 2;
+      }
+
+      return { sx, sy, sw, sh };
+    }
+
+    function createPanoramaFromSixPhotos() {
       const W = panoCanvas.width;
       const H = panoCanvas.height;
 
       panoCtx.fillStyle = "#05070a";
       panoCtx.fillRect(0, 0, W, H);
 
-      const imgW = photoCanvas.width;
-      const imgH = photoCanvas.height;
+      const sideY = H * 0.18;
+      const sideH = H * 0.64;
+      const sideW = W / 4;
 
-      const stripCount = 8;
-      const stripW = W / stripCount;
+      // Fotos 1-4: alrededor del horizonte.
+      for (let i = 0; i < 4; i++) {
+        const img = photos[i];
+        const targetX = i * sideW;
 
-      for (let i = 0; i < stripCount; i++) {
-        const sx = (i / stripCount) * imgW;
-        const sw = imgW / stripCount;
-
-        panoCtx.drawImage(
-          photoCanvas,
-          sx, 0, sw, imgH,
-          i * stripW, H * 0.18, stripW + 2, H * 0.64
+        drawImageCoverToRect(
+          panoCtx,
+          img,
+          targetX,
+          sideY,
+          sideW + 2,
+          sideH
         );
       }
 
-      const topGradient = panoCtx.createLinearGradient(0, 0, 0, H * 0.28);
-      topGradient.addColorStop(0, "rgba(5,7,10,0.95)");
-      topGradient.addColorStop(1, "rgba(5,7,10,0)");
+      // Foto 5: cielo. Se extiende en la zona superior.
+      drawImageCoverToRect(
+        panoCtx,
+        photos[4],
+        0,
+        0,
+        W,
+        H * 0.32
+      );
 
-      panoCtx.fillStyle = topGradient;
-      panoCtx.fillRect(0, 0, W, H * 0.3);
+      // Foto 6: suelo. Se extiende en la zona inferior.
+      drawImageCoverToRect(
+        panoCtx,
+        photos[5],
+        0,
+        H * 0.68,
+        W,
+        H * 0.32
+      );
 
-      const bottomGradient = panoCtx.createLinearGradient(0, H * 0.72, 0, H);
-      bottomGradient.addColorStop(0, "rgba(5,7,10,0)");
-      bottomGradient.addColorStop(1, "rgba(5,7,10,0.95)");
+      // Fundidos suaves para mezclar cielo/horizonte/suelo.
+      const topFade = panoCtx.createLinearGradient(0, H * 0.18, 0, H * 0.36);
+      topFade.addColorStop(0, "rgba(5,7,10,0.0)");
+      topFade.addColorStop(1, "rgba(5,7,10,0.24)");
+      panoCtx.fillStyle = topFade;
+      panoCtx.fillRect(0, H * 0.18, W, H * 0.18);
 
-      panoCtx.fillStyle = bottomGradient;
-      panoCtx.fillRect(0, H * 0.7, W, H * 0.3);
+      const bottomFade = panoCtx.createLinearGradient(0, H * 0.64, 0, H * 0.82);
+      bottomFade.addColorStop(0, "rgba(5,7,10,0.22)");
+      bottomFade.addColorStop(1, "rgba(5,7,10,0.0)");
+      panoCtx.fillStyle = bottomFade;
+      panoCtx.fillRect(0, H * 0.64, W, H * 0.18);
 
-      panoCtx.strokeStyle = "rgba(77, 240, 200, 0.22)";
+      // Líneas muy suaves de esfera para que se entienda el objeto 3D.
+      panoCtx.strokeStyle = "rgba(77,240,200,0.10)";
       panoCtx.lineWidth = 2;
 
-      for (let x = 0; x <= W; x += W / 12) {
+      for (let x = 0; x <= W; x += W / 16) {
         panoCtx.beginPath();
         panoCtx.moveTo(x, 0);
         panoCtx.lineTo(x, H);
         panoCtx.stroke();
       }
 
-      for (let y = 0; y <= H; y += H / 6) {
+      for (let y = 0; y <= H; y += H / 8) {
         panoCtx.beginPath();
         panoCtx.moveTo(0, y);
         panoCtx.lineTo(W, y);
@@ -346,25 +473,49 @@ import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/control
       }
     }
 
-    function createSphere() {
+    function drawImageCoverToRect(ctx, img, x, y, w, h) {
+      const cover = coverRect(img.width, img.height, w, h);
+
+      ctx.drawImage(
+        img,
+        cover.sx,
+        cover.sy,
+        cover.sw,
+        cover.sh,
+        x,
+        y,
+        w,
+        h
+      );
+    }
+
+    function createFloatingSphere() {
+      if (photos.length < 6) {
+        setStatus("Faltan fotos. Captura las 6 antes de crear la esfera.");
+        return;
+      }
+
+      createPanoramaFromSixPhotos();
       disposeViewer();
 
       video.style.display = "none";
       viewer.style.display = "block";
       captureRing.classList.add("hidden");
 
-      setStatus("Esfera creada. Arrastra con el dedo para girarla.");
+      setStatus("Esfera creada. Pellizca para zoom y arrastra para girarla.");
+      setStep("Esfera flotante 3D");
 
       scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x05070a);
 
       camera3d = new THREE.PerspectiveCamera(
-        75,
+        45,
         window.innerWidth / window.innerHeight,
         0.1,
-        1000
+        100
       );
 
-      camera3d.position.set(0, 0, 0.1);
+      camera3d.position.set(0, 0, 4.2);
 
       renderer = new THREE.WebGLRenderer({
         antialias: true,
@@ -381,8 +532,7 @@ import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/control
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.needsUpdate = true;
 
-      const geometry = new THREE.SphereGeometry(50, 96, 48);
-      geometry.scale(-1, 1, 1);
+      const geometry = new THREE.SphereGeometry(1.35, 96, 48);
 
       const material = new THREE.MeshBasicMaterial({
         map: texture
@@ -391,18 +541,37 @@ import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/control
       const sphere = new THREE.Mesh(geometry, material);
       scene.add(sphere);
 
+      // Aro ecuatorial suave para reforzar que es una esfera flotando.
+      const ringGeometry = new THREE.TorusGeometry(1.39, 0.008, 16, 160);
+      const ringMaterial = new THREE.MeshBasicMaterial({
+        color: 0x4df0c8,
+        transparent: true,
+        opacity: 0.36
+      });
+      const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+      ring.rotation.x = Math.PI / 2;
+      scene.add(ring);
+
+      // Luz ambiental no necesaria para MeshBasicMaterial,
+      // pero queda preparada si luego usamos materiales brillantes.
+      const ambient = new THREE.AmbientLight(0xffffff, 1);
+      scene.add(ambient);
+
       controls = new OrbitControls(camera3d, renderer.domElement);
-      controls.enableZoom = false;
+      controls.enableZoom = true;
       controls.enablePan = false;
-      controls.rotateSpeed = -0.45;
       controls.enableDamping = true;
       controls.dampingFactor = 0.08;
+      controls.rotateSpeed = 0.55;
+      controls.zoomSpeed = 0.9;
+      controls.minDistance = 2.1;
+      controls.maxDistance = 8.5;
+      controls.target.set(0, 0, 0);
 
       animate();
 
       window.addEventListener("resize", onResize);
 
-      captureBtn.disabled = true;
       sphereBtn.disabled = true;
     }
 
@@ -410,6 +579,7 @@ import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/control
       animationId = requestAnimationFrame(animate);
 
       if (controls) controls.update();
+
       if (renderer && scene && camera3d) {
         renderer.render(scene, camera3d);
       }
@@ -460,20 +630,30 @@ import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/control
       video.style.display = "block";
       viewer.style.display = "none";
       captureRing.classList.remove("hidden");
-      thumb.style.display = "none";
+
+      currentStep = 0;
+      photos = [];
 
       cameraBtn.disabled = false;
       captureBtn.disabled = true;
       sphereBtn.disabled = true;
 
+      captureBtn.textContent = "Foto 1";
+
+      for (const canvas of thumbs) {
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
       panoCtx.clearRect(0, 0, panoCanvas.width, panoCanvas.height);
 
-      setStatus("Pulsa “Cámara”. Después apunta a una escena y pulsa “Capturar”.");
+      setStatus("Pulsa “Cámara”. Después haremos 6 fotos guiadas.");
+      setStep("Esperando cámara");
     }
 
     cameraBtn.addEventListener("click", startCamera);
     captureBtn.addEventListener("click", capturePhoto);
-    sphereBtn.addEventListener("click", createSphere);
+    sphereBtn.addEventListener("click", createFloatingSphere);
     resetBtn.addEventListener("click", resetApp);
   </script>
 </body>
